@@ -1,24 +1,27 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const PORT = Number(process.env.E2E_PORT ?? 3100);
+// Préproduction distante : E2E_BASE_URL=https://preprod... E2E_HTTP_USER / E2E_HTTP_PASSWORD (accès recette)
+const REMOTE = process.env.E2E_BASE_URL;
 
 export default defineConfig({
   testDir: "./e2e",
-  globalSetup: "./e2e/global-setup.ts",
+  globalSetup: REMOTE ? undefined : "./e2e/global-setup.ts",
   timeout: 60_000,
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? "github" : "list",
   use: {
-    baseURL: `http://localhost:${PORT}`,
+    baseURL: REMOTE ?? `http://localhost:${PORT}`,
+    httpCredentials: process.env.E2E_HTTP_USER ? { username: process.env.E2E_HTTP_USER, password: process.env.E2E_HTTP_PASSWORD ?? "" } : undefined,
     trace: "off",
     launchOptions: process.env.PW_CHROMIUM_PATH ? { executablePath: process.env.PW_CHROMIUM_PATH } : undefined,
   },
   projects: [
     { name: "mobile", use: { ...devices["Pixel 5"], locale: "fr-FR" } },
   ],
-  webServer: {
+  webServer: REMOTE ? undefined : {
     command: "./scripts/start-standalone.sh",
     port: PORT,
     reuseExistingServer: !process.env.CI,

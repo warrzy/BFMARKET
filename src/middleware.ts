@@ -4,7 +4,17 @@ import { NextResponse, type NextRequest } from "next/server";
 // Activé via SHOP_SUBDOMAINS_ENABLED=true + DNS wildcard ; réécrit vers /boutique/<slug>.
 const RESERVED = new Set(["www", "app", "api", "admin", "static", "cdn", "mail"]);
 
+function noindex(res: NextResponse) {
+  // Préproduction : en-tête anti-indexation sur toutes les réponses
+  if (process.env.SITE_NOINDEX === "true") res.headers.set("X-Robots-Tag", "noindex, nofollow, noarchive");
+  return res;
+}
+
 export function middleware(req: NextRequest) {
+  return noindex(route(req));
+}
+
+function route(req: NextRequest) {
   if (process.env.SHOP_SUBDOMAINS_ENABLED !== "true") return NextResponse.next();
   const root = process.env.ROOT_DOMAIN;
   const host = (req.headers.get("host") ?? "").split(":")[0];

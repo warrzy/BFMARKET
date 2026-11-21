@@ -16,6 +16,7 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   openGraph: { siteName: "ECOM MARKET", type: "website", locale: "fr_FR" },
   icons: { icon: "/icon.svg", apple: "/icon.svg" },
+  ...(process.env.SITE_NOINDEX === "true" ? { robots: { index: false, follow: false } } : {}),
 };
 
 export const viewport: Viewport = {
