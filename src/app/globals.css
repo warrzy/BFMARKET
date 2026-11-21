@@ -1,0 +1,64 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: 250 248 245;
+    --surface: 255 255 255;
+    --surface-2: 244 241 236;
+    --text: 17 19 47;
+    --muted: 96 99 128;
+    --border: 229 225 218;
+    color-scheme: light;
+  }
+  .dark {
+    --bg: 10 11 30;
+    --surface: 20 22 48;
+    --surface-2: 29 33 72;
+    --text: 238 239 248;
+    --muted: 160 166 205;
+    --border: 45 51 102;
+    color-scheme: dark;
+  }
+  html { -webkit-tap-highlight-color: transparent; }
+  body { @apply bg-[rgb(var(--bg))] text-[rgb(var(--text))] antialiased; font-feature-settings: "ss01", "cv11"; }
+  h1, h2, h3 { @apply font-display tracking-tight; }
+  :focus-visible { @apply outline-none ring-2 ring-brand-500 ring-offset-2 ring-offset-[rgb(var(--bg))]; }
+}
+
+@layer components {
+  .container-x { @apply mx-auto w-full max-w-7xl px-4 sm:px-6; }
+  .card { @apply rounded-2xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] shadow-card; }
+  .muted { @apply text-[rgb(var(--muted))]; }
+  .surface-2 { @apply bg-[rgb(var(--surface-2))]; }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition active:scale-[.98] disabled:opacity-50 disabled:pointer-events-none; }
+  .btn-primary { @apply btn bg-brand-500 text-white hover:bg-brand-600 shadow-sm shadow-brand-500/30; }
+  .btn-dark { @apply btn bg-night-900 text-white hover:bg-night-800 dark:bg-white dark:text-night-900 dark:hover:bg-night-100; }
+  .btn-ghost { @apply btn border border-[rgb(var(--border))] bg-[rgb(var(--surface))] hover:bg-[rgb(var(--surface-2))]; }
+  .btn-wa { @apply btn bg-wa-500 text-white hover:bg-wa-600 shadow-sm shadow-wa-500/30; }
+  .btn-danger { @apply btn bg-red-600 text-white hover:bg-red-700; }
+  .input { @apply w-full rounded-xl border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3.5 py-2.5 text-[15px] placeholder:text-[rgb(var(--muted))] focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20; }
+  .label { @apply mb-1.5 block text-sm font-medium; }
+  .chip { @apply inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-[rgb(var(--border))] bg-[rgb(var(--surface))] px-3.5 py-1.5 text-sm font-medium transition hover:border-brand-400; }
+  .chip-active { @apply border-night-900 bg-night-900 text-white dark:border-white dark:bg-white dark:text-night-900; }
+  .badge { @apply inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold; }
+  .skeleton { @apply relative overflow-hidden rounded-xl bg-[rgb(var(--surface-2))] after:absolute after:inset-0 after:-translate-x-full after:animate-[shimmer_1.4s_infinite] after:bg-gradient-to-r after:from-transparent after:via-white/40 after:to-transparent dark:after:via-white/5; }
+  .scroll-row { @apply flex snap-x snap-mandatory gap-3 overflow-x-auto pb-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden; }
+  .table-x { @apply w-full text-sm [&_th]:px-3 [&_th]:py-2.5 [&_th]:text-left [&_th]:font-semibold [&_th]:muted [&_td]:px-3 [&_td]:py-3 [&_tr]:border-b [&_tr]:border-[rgb(var(--border))]; }
+}
+
+.bg-mesh {
+  background:
+    radial-gradient(60% 80% at 85% 10%, rgba(242, 84, 18, .55), transparent 60%),
+    radial-gradient(50% 70% at 10% 90%, rgba(233, 169, 12, .35), transparent 60%),
+    radial-gradient(80% 80% at 50% 50%, #1D2154, #0A0B1E);
+}
+.pattern-kente {
+  background-image:
+    repeating-linear-gradient(45deg, rgba(255,255,255,.05) 0 2px, transparent 2px 14px),
+    repeating-linear-gradient(-45deg, rgba(255,255,255,.04) 0 2px, transparent 2px 14px);
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

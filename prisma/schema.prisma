@@ -1,0 +1,702 @@
+// ECOM MARKET — schéma de données
+// Monolithe modulaire : chaque bloc correspond à un module (auth, geo, catalog, shops,
+// orders, payments, subscriptions, notifications, admin).
+// Isolation multi-tenant : toutes les ressources vendeur portent `shopId` et chaque
+// accès serveur filtre par la boutique de l'utilisateur (voir src/server/auth/guards.ts).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── AUTH ─────────────────────────────
+
+enum Role {
+  BUYER
+  SELLER
+  AGENT // agence / commercial partenaire
+  COUNTRY_ADMIN // administrateur local d'un pays
+  ADMIN
+  SUPER_ADMIN
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String?   @unique
+  phone         String?   @unique // E.164
+  passwordHash  String
+  name          String
+  role          Role      @default(BUYER)
+  locale        String    @default("fr")
+  countryCode   String?
+  verifiedAt    DateTime?
+  suspendedAt   DateTime?
+  adminCountries String[] @default([]) // pour COUNTRY_ADMIN
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  deletedAt     DateTime?
+
+  sessions      Session[]
+  shops         ShopMember[]
+  orders        Order[]
+  reviews       Review[]
+  favorites     Favorite[]
+  verifications VerificationCode[]
+  auditLogs     AuditLog[]
+  agentShops    Shop[]    @relation("AgentShops")
+  reports       Report[]
+  notifications Notification[]
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  tokenHash  String   @unique
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt  DateTime
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([userId])
+}
+
+model VerificationCode {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel   String // "phone" | "email"
+  codeHash  String
+  attempts  Int      @default(0)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+}
+
+// Limitation de débit persistée (fonctionne sans Redis ; Redis optionnel)
+model RateLimit {
+  key       String   @id
+  count     Int
+  resetAt   DateTime
+}
+
+// ───────────────────────────── GEO ─────────────────────────────
+
+model Country {
+  code         String   @id // ISO 3166-1 alpha-2
+  nameFr       String
+  nameEn       String
+  flag         String
+  dialCode     String
+  currency     String // XOF, GHS, NGN, GNF, CVE...
+  locale       String   @default("fr")
+  active       Boolean  @default(false)
+  sortOrder    Int      @default(100)
+  cities       City[]
+  shops        Shop[]
+  planPrices   PlanPrice[]
+  providers    PaymentProviderConfig[]
+}
+
+model City {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String
+  countryCode String
+  country     Country  @relation(fields: [countryCode], references: [code])
+  active      Boolean  @default(true)
+  lat         Float?
+  lng         Float?
+  shops       Shop[]
+
+  @@unique([countryCode, slug])
+}
+
+// ───────────────────────────── CATALOG ─────────────────────────────
+
+model Category {
+  id         String     @id @default(cuid())
+  slug       String     @unique
+  nameFr     String
+  nameEn     String
+  icon       String     @default("tag")
+  parentId   String?
+  parent     Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children   Category[] @relation("CategoryTree")
+  // Attributs / filtres spécifiques : [{ key, labelFr, labelEn, type: "select"|"text"|"number", options? }]
+  attributes Json       @default("[]")
+  active     Boolean    @default(true)
+  sortOrder  Int        @default(100)
+  products   Product[]
+}
+
+enum ProductType {
+  PHYSICAL
+  DIGITAL
+  SERVICE
+}
+
+enum ProductStatus {
+  DRAFT
+  ACTIVE
+  UNAVAILABLE
+  PENDING_REVIEW
+  REJECTED
+}
+
+model Product {
+  id             String        @id @default(cuid())
+  shopId         String
+  shop           Shop          @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  categoryId     String?
+  category       Category?     @relation(fields: [categoryId], references: [id])
+  shopSectionId  String?
+  shopSection    ShopSection?  @relation(fields: [shopSectionId], references: [id], onDelete: SetNull)
+  slug           String        @unique
+  sku            String?
+  title          String
+  description    String        @default("")
+  type           ProductType   @default(PHYSICAL)
+  status         ProductStatus @default(ACTIVE)
+  currency       String
+  price          Int // en unité monétaire entière (XOF n'a pas de centimes)
+  promoPrice     Int?
+  promoStartsAt  DateTime?
+  promoEndsAt    DateTime?
+  stock          Int?          // null = non suivi
+  lowStockAlert  Int?
+  tags           String[]      @default([])
+  attributes     Json          @default("{}")
+  featured       Boolean       @default(false)
+  videoUrl       String?
+  seoTitle       String?
+  seoDescription String?
+  digitalFileUrl String?       // livré après paiement confirmé
+  viewCount      Int           @default(0)
+  moderationNote String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  deletedAt      DateTime?
+
+  images         ProductImage[]
+  variants       ProductVariant[]
+  orderItems     OrderItem[]
+  reviews        Review[]
+  favorites      Favorite[]
+
+  @@index([shopId, status])
+  @@index([status, createdAt])
+  @@index([categoryId, status])
+}
+
+model ProductImage {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  alt       String?
+  position  Int     @default(0)
+}
+
+model ProductVariant {
+  id        String  @id @default(cuid())
+  productId String
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  name      String  // ex. "Rouge / XL"
+  options   Json    @default("{}") // { couleur: "Rouge", taille: "XL" }
+  price     Int?    // null = prix du produit
+  stock     Int?
+  sku       String?
+}
+
+model Favorite {
+  userId    String
+  productId String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@id([userId, productId])
+}
+
+// ───────────────────────────── SHOPS ─────────────────────────────
+
+enum ShopStatus {
+  DRAFT // onboarding en cours
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum VerificationStatus {
+  NONE
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+model Shop {
+  id                 String             @id @default(cuid())
+  slug               String             @unique
+  name               String
+  tagline            String?
+  description        String             @default("")
+  sector             String?
+  logoUrl            String?
+  coverUrl           String?
+  countryCode        String
+  country            Country            @relation(fields: [countryCode], references: [code])
+  cityId             String?
+  city               City?              @relation(fields: [cityId], references: [id])
+  neighborhood       String?
+  address            String?
+  whatsapp           String?            // E.164
+  phone              String?
+  email              String?
+  openingHours       Json               @default("{}")
+  deliveryPolicy     String?
+  returnPolicy       String?
+  theme              String             @default("savane") // modèle de boutique
+  accentColor        String             @default("#E8590C")
+  status             ShopStatus         @default(DRAFT)
+  verification       VerificationStatus @default(NONE)
+  verifiedAt         DateTime?
+  onboardingStep     Int                @default(3)
+  agentId            String?
+  agent              User?              @relation("AgentShops", fields: [agentId], references: [id])
+  socials            Json               @default("{}")
+  visitCount         Int                @default(0)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  members            ShopMember[]
+  products           Product[]
+  sections           ShopSection[]
+  subOrders          SubOrder[]
+  subscriptions      Subscription[]
+  reviews            Review[]
+  deliveryOptions    DeliveryOption[]
+  coupons            Coupon[]
+  visits             ShopVisitDaily[]
+  reports            Report[]
+
+  @@index([countryCode, cityId, status])
+}
+
+enum ShopMemberRole {
+  OWNER
+  MANAGER
+  STAFF
+}
+
+model ShopMember {
+  shopId String
+  userId String
+  role   ShopMemberRole @default(OWNER)
+  shop   Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([shopId, userId])
+  @@index([userId])
+}
+
+model ShopSection {
+  id       String    @id @default(cuid())
+  shopId   String
+  shop     Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name     String
+  position Int       @default(0)
+  products Product[]
+}
+
+model ShopVisitDaily {
+  shopId String
+  day    DateTime @db.Date
+  count  Int      @default(0)
+  shop   Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@id([shopId, day])
+}
+
+model DeliveryOption {
+  id          String  @id @default(cuid())
+  shopId      String
+  shop        Shop    @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  name        String  // "Livraison Ouagadougou", "Retrait en boutique"
+  fee         Int     @default(0)
+  feeOnQuote  Boolean @default(false) // frais communiqués par le vendeur
+  delayLabel  String?
+  active      Boolean @default(true)
+}
+
+// ───────────────────────────── ORDERS ─────────────────────────────
+
+enum OrderChannel {
+  WEB
+  WHATSAPP
+}
+
+enum SubOrderStatus {
+  PENDING      // reçue, à confirmer par le vendeur
+  CONFIRMED
+  PREPARING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  RETURNED
+}
+
+enum PaymentStatus {
+  UNPAID
+  DECLARED    // le vendeur ou le client déclare un paiement hors plateforme (non vérifié)
+  PENDING     // paiement en ligne initié
+  PAID        // confirmé par vérification serveur ou validation manuelle
+  FAILED
+  REFUNDED
+}
+
+model Order {
+  id            String       @id @default(cuid())
+  reference     String       @unique // ex. EM-7K2Q9X
+  userId        String?
+  user          User?        @relation(fields: [userId], references: [id])
+  channel       OrderChannel @default(WEB)
+  buyerName     String
+  buyerPhone    String
+  buyerEmail    String?
+  countryCode   String
+  city          String
+  neighborhood  String?
+  landmark      String?
+  note          String?
+  currency      String
+  itemsTotal    Int
+  createdAt     DateTime     @default(now())
+  trackingToken String       @unique // permet le suivi invité
+
+  subOrders     SubOrder[]
+
+  @@index([userId])
+}
+
+model SubOrder {
+  id               String         @id @default(cuid())
+  orderId          String
+  order            Order          @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shopId           String
+  shop             Shop           @relation(fields: [shopId], references: [id])
+  reference        String         @unique // EM-7K2Q9X-1
+  status           SubOrderStatus @default(PENDING)
+  paymentStatus    PaymentStatus  @default(UNPAID)
+  paymentMethod    String         // code du fournisseur : cod, direct, manual, cinetpay...
+  deliveryName     String?
+  deliveryFee      Int            @default(0)
+  deliveryOnQuote  Boolean        @default(false)
+  itemsTotal       Int
+  total            Int
+  currency         String
+  couponCode       String?
+  discount         Int            @default(0)
+  sellerNote       String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  items            OrderItem[]
+  events           OrderEvent[]
+  transactions     Transaction[]
+  review           Review[]
+  disputes         Dispute[]
+
+  @@index([shopId, status])
+  @@index([shopId, createdAt])
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  subOrderId  String
+  subOrder    SubOrder @relation(fields: [subOrderId], references: [id], onDelete: Cascade)
+  productId   String?
+  product     Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  variantId   String?
+  title       String   // instantané
+  variantName String?
+  unitPrice   Int
+  quantity    Int
+  total       Int
+}
+
+model OrderEvent {
+  id         String   @id @default(cuid())
+  subOrderId String
+  subOrder   SubOrder @relation(fields: [subOrderId], references: [id], onDelete: Cascade)
+  type       String   // status_change, payment, note
+  fromValue  String?
+  toValue    String?
+  note       String?
+  actorId    String?
+  createdAt  DateTime @default(now())
+
+  @@index([subOrderId])
+}
+
+// ───────────────────────────── PAYMENTS ─────────────────────────────
+
+model PaymentProviderConfig {
+  id          String   @id @default(cuid())
+  provider    String   // cod | direct | manual | cinetpay | paydunya
+  countryCode String
+  country     Country  @relation(fields: [countryCode], references: [code])
+  enabled     Boolean  @default(false)
+  mode        String   @default("test") // test | live
+  // Paramètres NON secrets uniquement (les clés vivent dans les variables d'environnement)
+  settings    Json     @default("{}")
+
+  @@unique([provider, countryCode])
+}
+
+enum TransactionStatus {
+  INITIATED
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+model Transaction {
+  id             String            @id @default(cuid())
+  provider       String
+  purpose        String            // order | subscription
+  subOrderId     String?
+  subOrder       SubOrder?         @relation(fields: [subOrderId], references: [id])
+  subscriptionId String?
+  subscription   Subscription?     @relation(fields: [subscriptionId], references: [id])
+  amount         Int
+  currency       String
+  status         TransactionStatus @default(INITIATED)
+  providerRef    String?           // identifiant chez le prestataire
+  idempotencyKey String            @unique
+  rawStatus      String?
+  failureReason  String?
+  validatedById  String?           // validation manuelle
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@unique([provider, providerRef])
+}
+
+// Webhooks reçus (idempotence + rapprochement)
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  provider    String
+  eventKey    String   // identifiant unique de l'événement chez le prestataire
+  payload     Json
+  verified    Boolean  @default(false)
+  processedAt DateTime?
+  error       String?
+  createdAt   DateTime @default(now())
+
+  @@unique([provider, eventKey])
+}
+
+// ───────────────────────────── SUBSCRIPTIONS ─────────────────────────────
+
+model Plan {
+  id            String      @id @default(cuid())
+  code          String      @unique // FREE | PRO | BUSINESS
+  nameFr        String
+  nameEn        String
+  descriptionFr String      @default("")
+  descriptionEn String      @default("")
+  // Limites et fonctionnalités : { maxProducts, promotions, advancedStats, staffAccounts, import, ai, featured }
+  features      Json        @default("{}")
+  trialDays     Int         @default(0)
+  active        Boolean     @default(true)
+  sortOrder     Int         @default(0)
+  prices        PlanPrice[]
+  subscriptions Subscription[]
+}
+
+model PlanPrice {
+  id          String  @id @default(cuid())
+  planId      String
+  plan        Plan    @relation(fields: [planId], references: [id], onDelete: Cascade)
+  countryCode String
+  country     Country @relation(fields: [countryCode], references: [code])
+  currency    String
+  monthly     Int
+  yearly      Int
+
+  @@unique([planId, countryCode])
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE // expirée, période de grâce
+  RESTRICTED // limitation progressive
+  CANCELLED
+}
+
+model Subscription {
+  id                 String             @id @default(cuid())
+  shopId             String
+  shop               Shop               @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  planId             String
+  plan               Plan               @relation(fields: [planId], references: [id])
+  status             SubscriptionStatus @default(ACTIVE)
+  interval           String             @default("monthly") // monthly | yearly
+  currentPeriodStart DateTime           @default(now())
+  currentPeriodEnd   DateTime?
+  autoRenew          Boolean            @default(false)
+  couponCode         String?
+  amount             Int                @default(0)
+  currency           String             @default("XOF")
+  current            Boolean            @default(true)
+  remindedAt         DateTime?
+  createdAt          DateTime           @default(now())
+  transactions       Transaction[]
+
+  @@index([shopId, current])
+}
+
+// Coupons : boutique (sur les commandes) ou plateforme (shopId null, sur les abonnements)
+model Coupon {
+  id          String    @id @default(cuid())
+  code        String
+  shopId      String?
+  shop        Shop?     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  scope       String    @default("order") // order | subscription
+  percentOff  Int?
+  amountOff   Int?
+  currency    String?
+  maxUses     Int?
+  usedCount   Int       @default(0)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  active      Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  @@unique([shopId, code])
+}
+
+// ───────────────────────────── TRUST & CONTENT ─────────────────────────────
+
+model Review {
+  id         String    @id @default(cuid())
+  productId  String?
+  product    Product?  @relation(fields: [productId], references: [id], onDelete: SetNull)
+  shopId     String
+  shop       Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  userId     String?
+  user       User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  subOrderId String
+  subOrder   SubOrder  @relation(fields: [subOrderId], references: [id], onDelete: Cascade)
+  authorName String
+  rating     Int
+  comment    String    @default("")
+  hidden     Boolean   @default(false)
+  createdAt  DateTime  @default(now())
+
+  @@unique([subOrderId, productId])
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWING
+  RESOLVED
+  DISMISSED
+}
+
+model Report {
+  id         String       @id @default(cuid())
+  targetType String       // product | shop
+  productId  String?
+  shopId     String?
+  shop       Shop?        @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  reporterId String?
+  reporter   User?        @relation(fields: [reporterId], references: [id], onDelete: SetNull)
+  reason     String
+  details    String       @default("")
+  status     ReportStatus @default(OPEN)
+  resolution String?
+  createdAt  DateTime     @default(now())
+}
+
+model Dispute {
+  id          String       @id @default(cuid())
+  subOrderId  String
+  subOrder    SubOrder     @relation(fields: [subOrderId], references: [id], onDelete: Cascade)
+  openedBy    String       // buyer | seller
+  reason      String
+  status      ReportStatus @default(OPEN)
+  resolution  String?
+  createdAt   DateTime     @default(now())
+}
+
+model Banner {
+  id          String    @id @default(cuid())
+  titleFr     String
+  titleEn     String
+  subtitleFr  String?
+  subtitleEn  String?
+  href        String?
+  imageUrl    String?
+  countryCode String?   // null = tous pays
+  placement   String    @default("home_hero") // home_hero | home_strip
+  active      Boolean   @default(true)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  sortOrder   Int       @default(0)
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  title     String
+  body      String
+  href      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+model Setting {
+  key   String @id
+  value Json
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String   // ex. shop.verify, product.reject, payment.validate
+  targetType String?
+  targetId   String?
+  countryCode String?
+  metadata   Json     @default("{}")
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([action, createdAt])
+  @@index([targetType, targetId])
+}
+
+model SupportTicket {
+  id        String   @id @default(cuid())
+  userId    String?
+  name      String
+  contact   String
+  subject   String
+  message   String
+  status    String   @default("open")
+  createdAt DateTime @default(now())
+}
